@@ -1,0 +1,8 @@
+parameters:
+    level: 0
+    inferPrivatePropertyTypeFromConstructor: true
+    paths:
+        - ./src
+
+    excludePaths:
+      - */cache/*

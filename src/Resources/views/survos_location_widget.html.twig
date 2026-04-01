@@ -1,0 +1,12 @@
+{% macro bar(link, num) %}
+    <div class="survos-location-widget-wrapper">
+        <div class="survos-location-widget">
+            <div class="survos-location-link-wrapper">
+                <a id="survos-location-link" href="{{ link }}">{{ 'survos_location.bar'|trans }}</a>
+            </div>
+            <div class="survos-location-service-wrapper">
+                <code>{{ survos_location_bar_service.foo(num, random(50)) }}</code>
+            </div>
+        </div>
+    </div>
+{% endmacro bar %}

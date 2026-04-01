@@ -1,0 +1,65 @@
+{
+    "name": "survos/location-bundle",
+    "description": "Use Geonames to in an application",
+    "keywords": [
+        "symfony",
+        "city",
+        "state"
+    ],
+    "homepage": "https://github.com/survos/SurvosLocationBundle",
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "Tac Tacelosky",
+            "email": "tacman@gmail.com"
+        }
+    ],
+    "type": "symfony-bundle",
+    "require": {
+        "php": "^8.4",
+        "doctrine/orm": "^3.3",
+        "doctrine/persistence": "^4.1",
+        "symfony/console": "^7.4||^8.0",
+        "symfony/doctrine-bridge": "^7.4||^8.0",
+        "symfony/flex": "^2.0",
+        "symfony/form": "^7.4||^8.0",
+        "symfony/framework-bundle": "^7.4||^8.0",
+        "symfony/validator": "^7.4||^8.0",
+        "symfony/yaml": "^7.4||^8.0"
+    },
+    "require-dev": {
+        "api-platform/core": "^4.0",
+        "phpstan/phpstan": "^2.0",
+        "phpunit/phpunit": "^12",
+        "stof/doctrine-extensions-bundle": "^1.14",
+        "symfony/phpunit-bridge": "^7.4||^8.0",
+        "symplify/config-transformer": "^12.4"
+    },
+    "autoload": {
+        "psr-4": {
+            "Survos\\LocationBundle\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Survos\\LocationBundle\\Tests\\": "tests/"
+        }
+    },
+    "scripts": {
+        "phpstan": "vendor/bin/phpstan",
+        "auto-scripts": {
+            "cache:clear": "symfony-cmd",
+            "assets:install %PUBLIC_DIR%": "symfony-cmd"
+        }
+    },
+    "config": {
+        "preferred-install": {
+            "*": "dist"
+        },
+        "sort-packages": true,
+        "allow-plugins": {
+            "symfony/flex": true
+        }
+    },
+    "prefer-stable": true
+}
