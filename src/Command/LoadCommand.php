@@ -1,245 +1,274 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Survos\LocationBundle\Command;
 
-use Doctrine\ORM\EntityManager;
 use Doctrine\ORM\EntityManagerInterface;
 use Doctrine\Persistence\ManagerRegistry;
-use Doctrine\Persistence\ObjectManager;
+use JsonException;
 use Survos\LocationBundle\Entity\Location;
 use Survos\LocationBundle\Repository\LocationRepository;
 use Symfony\Component\Console\Attribute\AsCommand;
+use Symfony\Component\Console\Attribute\Option;
 use Symfony\Component\Console\Command\Command;
-use Symfony\Component\Console\Input\InputArgument;
-use Symfony\Component\Console\Input\InputInterface;
-use Symfony\Component\Console\Input\InputOption;
-use Symfony\Component\Console\Output\ConsoleOutput;
-use Symfony\Component\Console\Output\OutputInterface;
 use Symfony\Component\Console\Style\SymfonyStyle;
 use Symfony\Component\Intl\Countries;
-use Symfony\Component\Validator\Validator\ValidatorInterface;
 
 #[AsCommand(
     name: 'survos:location:load',
-    description: 'Load Symfony countries, ISO 2nd level, and world cities as locations',
+    description: 'Load countries, subdivisions, and cities into the Location hierarchy.',
+    aliases: ['survos:location:seed'],
 )]
-class LoadCommand extends Command
+final class LoadCommand
 {
-    private EntityManagerInterface $em;
-    private LocationRepository $locationRepository;
-    private array $levels = ['Continent', 'Country','State','City'];
+    private const COUNTRY_LEVEL = 1;
+    private const SUBDIVISION_LEVEL = 2;
+    private const CITY_LEVEL = 3;
+    private const LEVEL_LABELS = [
+        self::COUNTRY_LEVEL => 'Country',
+        self::SUBDIVISION_LEVEL => 'Subdivision',
+        self::CITY_LEVEL => 'City',
+    ];
 
-    public function __construct(ManagerRegistry $registry,
-//                                private ValidatorInterface $validator,
-                                ?string $name=null)
-    {
-        // since we don't know EM is associated with the Location    table, pass in the registry instead.
-        $this->em = $registry->getManager('survos_location');
-        $this->locationRepository = $this->em->getRepository(Location::class);
-
-        parent::__construct($name);
+    public function __construct(
+        private readonly ManagerRegistry $registry,
+    ) {
     }
 
-    protected function configure(): void
-    {
-        $this
-            ->addArgument('arg1', InputArgument::OPTIONAL, 'Argument description')
-            ->addOption('option1', null, InputOption::VALUE_NONE, 'Option description')
-        ;
-    }
+    public function __invoke(
+        SymfonyStyle $io,
+        #[Option('Append to existing locations instead of truncating the table first.')]
+        bool $append = false,
+        #[Option('Path or URL to the ISO 3166-2 subdivisions JSON document.')]
+        ?string $isoSource = null,
+        #[Option('Path or URL to the normalized world cities JSON document.')]
+        ?string $citiesSource = null,
+    ): int {
+        $entityManager = $this->getEntityManager();
+        $repository = $this->getRepository($entityManager);
 
-    protected function execute(InputInterface $input, OutputInterface $output): int
-    {
+        if (!$append) {
+            $deleted = $repository->createQueryBuilder('location')
+                ->delete()
+                ->getQuery()
+                ->execute();
 
-        $io = new SymfonyStyle($input, $output);
+            $entityManager->clear();
+            $io->writeln(sprintf('Deleted %d existing locations.', $deleted));
+        }
 
-        $this->load($this->em);
+        $this->loadCountries($entityManager, $io);
+        $this->loadSubdivisions($entityManager, $repository, $io, $isoSource ?? $this->defaultIsoSource());
+        $this->loadCities($entityManager, $repository, $io, $citiesSource ?? $this->defaultCitiesSource());
+
+        $io->success('Location hierarchy loaded.');
 
         return Command::SUCCESS;
     }
 
-    /**
-     * @var mixed[][]
-     */
-    private array $lvlCache = [];
-
-    public function load(ObjectManager $manager): void
+    private function loadCountries(EntityManagerInterface $entityManager, SymfonyStyle $io): void
     {
-        $this->output = new ConsoleOutput();
-        $this->manager = $manager;
-        $this->locationRepository->createQueryBuilder('l')
-//            ->where('l.lvl = 3')
-            ->delete()->getQuery()->execute();
-        $this->em->flush();
-//        $this->flushLevel(0);
-
-        $this->loadCountries();
-        $this->loadIso3166();
-        $this->loadCities();
-    }
-
-
-    private function loadCountries($lvl = 1): void
-    {
-        $this->output->writeln("Loading Countries from Symfony Intl component");
         $countries = Countries::getNames();
-        foreach ($countries as $alpha2=>$name) {
-            $countryCode = $alpha2;
-            $location = new Location($countryCode, $name, $lvl);
-            $location
-                ->setCountryCode($alpha2);
-//            $errors = $this->validator->validate($location);
-//            if (count($errors)) {
-//                assert(false, (string) $errors);
-//            }
+        $io->section(sprintf('Loading %d countries', count($countries)));
 
-            $this->manager->persist($location);
+        foreach ($countries as $countryCode => $name) {
+            $entityManager->persist(
+                (new Location($countryCode, $name, self::COUNTRY_LEVEL))
+                    ->setCountryCode($countryCode)
+            );
         }
-        $this->flushLevel($lvl);
+
+        $this->flush($entityManager, self::COUNTRY_LEVEL, $io);
     }
 
-    // l "states/regions/subcountries" (lvl-2),
-    private function loadIso3166($lvl = 2): void
-    {
-        $json = file_get_contents('https://raw.githubusercontent.com/olahol/iso-3166-2.json/master/iso-3166-2.json');
-        // $json = file_get_contents('public/iso-3166-2.json');
-        $regions = [];
-        $regionsByName = [];
+    private function loadSubdivisions(
+        EntityManagerInterface $entityManager,
+        LocationRepository $repository,
+        SymfonyStyle $io,
+        string $source,
+    ): void {
+        /** @var array<string, array{name?: string, divisions?: array<string, string>}> $subdivisions */
+        $subdivisions = $this->readJson($source);
+        $countries = $this->countryReferences($repository);
 
-        $countries = [];
-        /** @var Location $countryLocation */
-        foreach ($this->locationRepository->createQueryBuilder('l')
-            ->select('l.countryCode', 'l.id', 'l.countryCode')
-            ->where('l.lvl = 1')
-                     ->getQuery()->getResult() as $x) {
-            $countries[$x['countryCode']] = [
-                'id' => $x['id'],
-                'code' => $x['countryCode']
-            ];
-        }
-//        findBy(['lvl' => 1]) as $countryLocation) {
-//            $countries[$countryLocation->getCountryCode()] = $countryLocation;
-//        }
-//        dump(array_keys($countries));
-        assert(count($countries), "no countries loaded.");
+        $loaded = 0;
+        $io->section(sprintf('Loading subdivisions from %s', $source));
 
-        foreach (json_decode($json) as $countryCode => $country) {
-            $this->output->writeln("Reading $countryCode " . count((array)$country->divisions));
-
-            if (!array_key_exists($countryCode, $countries)) {
-                continue; // missing TP, East Timor.
+        foreach ($subdivisions as $countryCode => $countryData) {
+            if (!isset($countries[$countryCode])) {
+                continue;
             }
-            $parentData = $countries[$countryCode];
 
-            $childCount = 0;
-            foreach ($country->divisions as $uniqueStateCode => $stateName) {
-                $childCount++;
-                $stateCode = preg_replace('/.*?-/', '', $uniqueStateCode);
+            foreach ($countryData['divisions'] ?? [] as $code => $name) {
+                $stateCode = (string) preg_replace('/^.*?-/', '', $code);
+                $parent = $entityManager->getReference(Location::class, $countries[$countryCode]['id']);
 
-//                dump($uniqueStateCode, $stateName, $lvl);
-                $location = (new Location($uniqueStateCode, $stateName, $lvl))
-                    ->setCountryCode($parentData['code'])
-                    ->setStateCode($stateCode)
-                    ->setParent($this->em->getReference(Location::class, $parentData['id']))
-                ;
-                $this->manager->persist($location);
-
-                $seen[$uniqueStateCode] = $location;
-
-//                $errors = $this->validator->validate($location);
-//                if (count($errors)) {
-//                    assert(false, $uniqueStateCode . '  ' . (string) $errors);
-//                }
-
-                $this->lvlCache[$lvl][$stateName] = $location;
-//                try {
-//                    $this->flushLevel($lvl);
-//                } catch (\Exception $exception) {
-//                    dd($uniqueStateCode, $location, $exception);
-//                }
+                $entityManager->persist(
+                    (new Location((string) $code, (string) $name, self::SUBDIVISION_LEVEL))
+                        ->setCountryCode($countryCode)
+                        ->setStateCode($stateCode)
+                        ->setParent($parent)
+                );
+                ++$loaded;
             }
-//            $parent->setChildCount($childCount);
         }
-        $this->flushLevel($lvl);
 
+        $this->flush($entityManager, self::SUBDIVISION_LEVEL, $io, $loaded);
     }
 
-    public function loadCities(): void
-    {
-        $lvl = 3;
-        $fn = __DIR__ . '/../../data/world-cities.json';
-        $json = file_get_contents($fn);
-        $data = json_decode($json);
-        $this->output->writeln("Reading level $lvl " . count($data));
+    private function loadCities(
+        EntityManagerInterface $entityManager,
+        LocationRepository $repository,
+        SymfonyStyle $io,
+        string $source,
+    ): void {
+        /** @var list<array{country: string, geonameid: int|string, name: string, subcountry: string}> $cities */
+        $cities = $this->readJson($source);
+        $states = $this->subdivisionReferences($repository);
 
-        $states = [];
-        /** @var Location $state */
-        foreach ($this->locationRepository->createQueryBuilder('l')
-                     ->select('l.name', 'l.id', 'l.countryCode', 'l.stateCode')
-                     ->where('l.lvl = 2')
-                     ->getQuery()->getResult() as $x) {
-            $states[$x['name']] = [
-                'id' => $x['id'],
-                'stateCode' => $x['stateCode'],
-                'countryCode' => $x['countryCode'],
-            ];
+        $loaded = 0;
+        $io->section(sprintf('Loading %d cities from %s', count($cities), $source));
 
-            // hack
-            if ($x['stateCode'] === 'DC') {
-                $states['Washington, D.C.'] = $states[$x['name']];
+        foreach ($cities as $index => $city) {
+            $subcountry = $city['subcountry'];
+            if (!isset($states[$subcountry])) {
+                continue;
             }
-        }
 
-        foreach ($data as $idx => $cityData) {
-//            $city = (new City())
-//                ->setName($cityData->name)
-//                ->setCode($cityData->geonameid)
-//                ->setCountry($cityData->country)
-//                ->setSubcountry($cityData->subcountry);
-//            $this->manager->persist($city);
-            // $this->output->writeln(sprintf("%d) Found %s in %s, %s ", $idx, $cityData->name, $cityData->subcountry, $cityData->country));
-
-            // $country = $countriesByName[$data->country];
-            if (!array_key_exists($cityData->subcountry, $states)) {
-                if ($cityData->country == 'United States') {
-//                    dump($cityData);
-                }
-            } else {
-                $parentData = $states[$cityData->subcountry];
-                $cityCode = $cityData->geonameid; // unique, could also be based on country / state / cityName
-//                $parent->setChildCount($parent->getChildCount() + 1);
-
-                $cityLoc = (new Location($cityCode, $cityData->name, $lvl))
-                    ->setStateCode($parentData['stateCode'])
+            $parentData = $states[$subcountry];
+            $entityManager->persist(
+                (new Location((string) $city['geonameid'], $city['name'], self::CITY_LEVEL))
                     ->setCountryCode($parentData['countryCode'])
-                    ->setParent($this->em->getReference(Location::class, $parentData['id']));
-                $this->manager->persist($cityLoc);
-            }
-            if ($idx % 2500 == 0) {
-                $this->flushLevel($lvl, $idx);
+                    ->setStateCode($parentData['stateCode'])
+                    ->setParent($entityManager->getReference(Location::class, $parentData['id']))
+            );
+
+            ++$loaded;
+
+            if (0 === ($index + 1) % 2500) {
+                $entityManager->flush();
+                $entityManager->clear();
+                $io->writeln(sprintf('Processed %d cities...', $index + 1));
             }
         }
-        $this->flushLevel($lvl);
+
+        $this->flush($entityManager, self::CITY_LEVEL, $io, $loaded);
     }
 
-    private function flushLevel(int $lvl, $idx=0): void
+    /**
+     * @return array<string, array{id: int}>
+     */
+    private function countryReferences(LocationRepository $repository): array
     {
-        $this->output->writeln("Flushing level $lvl " . $this->levels[$lvl]);
-        $this->manager->flush(); // set the IDs
-        $this->manager->clear();
-        //        $count = $this->locationRepository->count(['lvl'=> $lvl]);
-        $count = -1; // $this->locationRepository->count([]);
-        $this->output->writeln(sprintf("After level $lvl idx is: %d", $idx));
-        if ($lvl) {
-            assert($count, "no $lvl locations!");
-        } else {
-            assert($count === 0, "should be empty");
+        $countries = [];
+        foreach ($repository->createQueryBuilder('location')
+            ->select('location.id, location.countryCode')
+            ->where('location.lvl = :level')
+            ->setParameter('level', self::COUNTRY_LEVEL)
+            ->getQuery()
+            ->getArrayResult() as $row) {
+            $countryCode = $row['countryCode'];
+            if (null === $countryCode) {
+                continue;
+            }
+
+            $countries[$countryCode] = ['id' => (int) $row['id']];
         }
 
-
+        return $countries;
     }
 
+    /**
+     * @return array<string, array{id: int, stateCode: ?string, countryCode: ?string}>
+     */
+    private function subdivisionReferences(LocationRepository $repository): array
+    {
+        $states = [];
+        foreach ($repository->createQueryBuilder('location')
+            ->select('location.id, location.name, location.stateCode, location.countryCode')
+            ->where('location.lvl = :level')
+            ->setParameter('level', self::SUBDIVISION_LEVEL)
+            ->getQuery()
+            ->getArrayResult() as $row) {
+            $states[$row['name']] = [
+                'id' => (int) $row['id'],
+                'stateCode' => $row['stateCode'],
+                'countryCode' => $row['countryCode'],
+            ];
 
+            if ('DC' === $row['stateCode']) {
+                $states['Washington, D.C.'] = $states[$row['name']];
+            }
+        }
 
+        return $states;
+    }
 
+    private function flush(
+        EntityManagerInterface $entityManager,
+        int $level,
+        SymfonyStyle $io,
+        int $count = 0,
+    ): void {
+        $entityManager->flush();
+        $entityManager->clear();
+
+        $io->writeln(sprintf(
+            'Flushed level %d (%s)%s',
+            $level,
+            self::LEVEL_LABELS[$level] ?? 'Unknown',
+            $count > 0 ? sprintf(' with %d records.', $count) : '.',
+        ));
+    }
+
+    /**
+     * @return array<mixed>
+     */
+    private function readJson(string $source): array
+    {
+        $contents = @file_get_contents($source);
+        if (false === $contents) {
+            throw new \RuntimeException(sprintf('Unable to read JSON from "%s".', $source));
+        }
+
+        try {
+            /** @var array<mixed> $decoded */
+            $decoded = json_decode($contents, true, 512, JSON_THROW_ON_ERROR);
+
+            return $decoded;
+        } catch (JsonException $exception) {
+            throw new \RuntimeException(sprintf('Invalid JSON in "%s": %s', $source, $exception->getMessage()), 0, $exception);
+        }
+    }
+
+    private function getEntityManager(): EntityManagerInterface
+    {
+        $entityManager = $this->registry->getManagerForClass(Location::class);
+        if (!$entityManager instanceof EntityManagerInterface) {
+            throw new \RuntimeException('Unable to resolve an entity manager for Location.');
+        }
+
+        return $entityManager;
+    }
+
+    private function getRepository(EntityManagerInterface $entityManager): LocationRepository
+    {
+        $repository = $entityManager->getRepository(Location::class);
+        if (!$repository instanceof LocationRepository) {
+            throw new \RuntimeException('Unable to resolve the Location repository.');
+        }
+
+        return $repository;
+    }
+
+    private function defaultIsoSource(): string
+    {
+        return dirname(__DIR__, 2) . '/data/iso-3166-2.json';
+    }
+
+    private function defaultCitiesSource(): string
+    {
+        return dirname(__DIR__, 2) . '/data/world-cities.json';
+    }
 }

@@ -1,10 +1,13 @@
 {
     "name": "survos/location-bundle",
-    "description": "Use Geonames to in an application",
+    "description": "Symfony bundle for building a Location authority tree from GeoNames-aligned reference data.",
     "keywords": [
         "symfony",
+        "geonames",
+        "location",
+        "country",
         "city",
-        "state"
+        "authority"
     ],
     "homepage": "https://github.com/survos/SurvosLocationBundle",
     "license": "MIT",
@@ -17,20 +20,24 @@
     "type": "symfony-bundle",
     "require": {
         "php": "^8.4",
+        "doctrine/doctrine-bundle": "^3.0",
         "doctrine/orm": "^3.3",
         "doctrine/persistence": "^4.1",
+        "gedmo/doctrine-extensions": "^3.21",
         "symfony/console": "^7.4||^8.0",
         "symfony/doctrine-bridge": "^7.4||^8.0",
-        "symfony/flex": "^2.0",
+        "symfony/filesystem": "^7.4||^8.0",
         "symfony/form": "^7.4||^8.0",
         "symfony/framework-bundle": "^7.4||^8.0",
+        "symfony/http-client": "^7.4||^8.0",
         "symfony/validator": "^7.4||^8.0",
         "symfony/yaml": "^7.4||^8.0"
     },
     "require-dev": {
+        "roave/security-advisories": "dev-latest",
         "api-platform/core": "^4.0",
         "phpstan/phpstan": "^2.0",
-        "phpunit/phpunit": "^12",
+        "phpunit/phpunit": "^13",
         "stof/doctrine-extensions-bundle": "^1.14",
         "symfony/phpunit-bridge": "^7.4||^8.0",
         "symplify/config-transformer": "^12.4"
@@ -47,10 +54,7 @@
     },
     "scripts": {
         "phpstan": "vendor/bin/phpstan",
-        "auto-scripts": {
-            "cache:clear": "symfony-cmd",
-            "assets:install %PUBLIC_DIR%": "symfony-cmd"
-        }
+        "test": "vendor/bin/phpunit"
     },
     "config": {
         "preferred-install": {
@@ -61,5 +65,10 @@
             "symfony/flex": true
         }
     },
-    "prefer-stable": true
+    "prefer-stable": true,
+    "extra": {
+        "branch-alias": {
+            "dev-main": "0.2-dev"
+        }
+    }
 }

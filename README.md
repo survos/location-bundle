@@ -1,57 +1,79 @@
-SurvosLocationBundle
-===================
 
-The SurvosLocationBundle uses the data from https://download.geonames.org/export/dump/ to create a Nested Tree with location data.
+# Survos Location Bundle
+
+
+
+
+DEPRECATED:  See survos/geonames-bundle instead.
+
+
+
+
+
+
+
+
+`survos/location-bundle` provides a Symfony `Location` authority built from GeoNames-aligned reference data. The bundle ships a Doctrine entity, repository, API metadata, and an external admin tool for fetching raw GeoNames datasets without depending on a host application's `bin/console`.
+
+The current bundle targets PHP 8.4+, Doctrine ORM 3, and Symfony 7.4 or 8.0.
+
+## What It Does
+
+- Stores locations as a nested tree using Gedmo Tree metadata.
+- Seeds countries, first-level subdivisions, and cities into a single `Location` entity.
+- Downloads canonical GeoNames source files for future refreshes and import workflows.
+- Exposes the `Location` entity through Doctrine and API Platform metadata.
+
+## Installation
 
 ```bash
-composer req survos/location-bundle
+composer require survos/location-bundle
 ```
 
-![Alt text](Resources/doc/logo.png?raw=true "Screenshot")
+Your host application should also enable Doctrine and, if you rely on tree operations, StofDoctrineExtensionsBundle or an equivalent Gedmo Tree listener setup.
 
-Features include:
+## Admin Tool
 
-- ...
+Fetch raw GeoNames source files from the repository root:
 
-[![Build Status](https://travis-ci.org/survos/SurvosLocationBundle.svg?branch=master)](https://travis-ci.org/survos/SurvosLocationBundle) [![Code Coverage](https://scrutinizer-ci.com/g/survos/SurvosLocationBundle/badges/coverage.png?b=master)](https://scrutinizer-ci.com/g/survos/SurvosLocationBundle/?branch=master) [![Scrutinizer Code Quality](https://scrutinizer-ci.com/g/survos/SurvosLocationBundle/badges/quality-score.png?b=master)](https://scrutinizer-ci.com/g/survos/SurvosLocationBundle/?branch=master) [![Latest Stable Version](https://poser.pugx.org/survos/voting-bundle/v/stable.svg)](https://packagist.org/packages/survos/voting-bundle)
+```bash
+php admin/load-geonames.php
+```
 
-Documentation
--------------
+Useful options:
 
-The source of the documentation is stored in the `Resources/doc/` folder
-in this bundle:
+- `--download-dir=/path/to/cache/geonames` controls where files are stored.
+- `--force` re-downloads files that already exist locally.
+- `--file=countryInfo.txt --file=admin1CodesASCII.txt` limits the download set.
 
-[Read the Documentation](Resources/doc/index.rst)
+This tool is implemented with Symfony's `SingleCommandApplication`, so it remains usable even when the consuming application does not provide a local `Kernel` or `bin/console`.
 
-Installation
-------------
+## Data Model
 
-All the installation instructions are located in the documentation.
+The bundle centers on `Survos\LocationBundle\Entity\Location`, which stores:
 
-composer config minimum-stability dev
-composer config prefer-stable true
+- a unique authority `code`
+- the display `name`
+- a numeric hierarchy level
+- optional `countryCode` and `stateCode`
+- parent/child relationships for nested traversal
 
-composer config repositories.survos_location_bundle '{"type": "vcs", "url": "git@github.com:survos/LocationBundle.git"}'
-composer req survos/location-bundle:"*@dev"
+Bundled seed data lives in [data/iso-3166-2.json](/home/tac/g/sites/mono/bu/location-bundle/data/iso-3166-2.json) and [data/world-cities.json](/home/tac/g/sites/mono/bu/location-bundle/data/world-cities.json).
 
+## Development
 
-License
--------
+Run the test suite with:
 
-This bundle is under the MIT license. See the complete license [in the bundle](LICENSE)
+```bash
+vendor/bin/phpunit
+```
 
-About
------
+The admin fetcher depends only on Composer autoloading and the Symfony Console component.
 
-LocationBundle is a [survos](https://github.com/survos) initiative.
-See also the list of [contributors](https://github.com/survos/SurvosLocationBundle/contributors).
+## Status
 
-Reporting an issue or a feature request
----------------------------------------
+This repository has been modernized around the bundle’s current value proposition: authoritative location naming backed by GeoNames reference data. The fetch workflow now lives under `admin/` so it can stay outside any consuming application. Loading normalized `Location` data is intentionally deferred for a later pass.
 
-Issues and feature requests are tracked in the [Github issue tracker](https://github.com/survos/SurvosLocationBundle/issues).
+## License
 
-When reporting a bug, it may be a good idea to reproduce it in a basic project
-built using the [Symfony Standard Edition](https://github.com/symfony/symfony-standard)
-to allow developers of the bundle to reproduce the issue by simply cloning it
-and following some steps.
+MIT. See [LICENSE](/home/tac/g/sites/mono/bu/location-bundle/LICENSE).
